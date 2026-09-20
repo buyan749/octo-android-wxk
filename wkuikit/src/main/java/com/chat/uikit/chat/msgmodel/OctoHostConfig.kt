@@ -93,6 +93,16 @@ object OctoHostConfig {
     }
 
     /**
+     * 清空缓存。深浅色切换未走 Activity recreate 的路径（如 [TabActivity] 承载的页面在
+     * configChanges 覆盖的配置变化中同时遭遇系统深浅色翻转）下，缓存里两种模式的实例仍在，
+     * 但底层 `values-night` 取色的资源上下文已变；主动清一次让下一次 [get] 按新模式重建。
+     * computeIfAbsent 内 palette 是即时从资源读的，清空后无需其它状态复位。
+     */
+    fun clearCache() {
+        cached.clear()
+    }
+
+    /**
      * 从 Android 资源系统读色，`values-night/color.xml` 自动生效。
      *
      * 复用已有 flip token：
