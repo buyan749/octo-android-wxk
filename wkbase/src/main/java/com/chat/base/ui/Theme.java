@@ -227,11 +227,15 @@ public class Theme {
      *
      * 按 themePref 分流，不能统一读某个 context 的 uiMode：
      *  - light/dark：偏好本身就是答案，直接返回。
-     *  - 跟随系统：必须查 {@link Resources#getSystem()} 的系统级 uiMode。App 若曾经
+     *  - 跟随系统（API 29+）：必须查 {@link Resources#getSystem()} 的系统级 uiMode。App 若曾经
      *    锁定过 light/dark，{@code setDefaultNightMode} 会把 Application/Activity 的
      *    Configuration 钉成那个强制值；切回"跟随系统"后该值不会立刻同步成系统真实状态，
      *    读它会得到上一次锁定的残留（表现为"系统已深色、切到跟随系统仍是浅色"）。
      *    Resources.getSystem() 是框架全局 Resources，不受 App 级覆写影响。
+     *  - 跟随系统（API 23-28）：系统没有全局深色开关，交给 AppCompat 的
+     *    MODE_NIGHT_AUTO_BATTERY，即"省电模式开启时深色"。静态色值必须用同一个数据源
+     *    （{@link PowerManager#isPowerSaveMode()}）自己判一遍，否则会与 AppCompat 的
+     *    实际渲染结果相反。
      */
     private static boolean shouldBeDarkNow() {
         String themePref = getTheme();
@@ -245,9 +249,12 @@ public class Theme {
         } else if (LIGHT_MODE.equals(themePref)) {
             result = false;
             source = "themePref";
-        } else {
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             result = sysNight == Configuration.UI_MODE_NIGHT_YES;
             source = "Resources.getSystem()";
+        } else {
+            result = isPowerSaveModeNow();
+            source = "PowerManager.isPowerSaveMode()";
         }
         // 去抖：shouldBeDarkNow 在渲染热路径被高频调用，逐帧打日志会给主线程注入延迟、
         // 垫平竞态窗口。只在【判定结果发生变化】时落一条，既覆盖每一次真实翻转，又几乎零噪声。
@@ -260,6 +267,25 @@ public class Theme {
                             + " result=" + result);
         }
         return result;
+    }
+
+    /**
+     * API 23-28 没有系统级深色开关，"跟随系统"走 MODE_NIGHT_AUTO_BATTERY，AppCompat
+     * 按省电模式状态决定是否深色；{@link #shouldBeDarkNow()} 需要在同一个数据源上自己
+     * 查一遍，保证静态色值与 AppCompat 的渲染结果一致。
+     *
+     * 这是"当前是否开着省电模式"的近似判断，不是对 AppCompat 内部判定逻辑的精确复刻
+     * （不同厂商 ROM 的省电-深色联动策略可能有细微差异）。该近似符合本次修复范围：
+     * 只覆盖 API 23-28 跟随系统这一存量场景，允许极少数机型上 isDark() 判断与
+     * AppCompat 实际渲染有短暂不一致。
+     */
+    private static boolean isPowerSaveModeNow() {
+        Context context = WKBaseApplication.getInstance().getContext();
+        if (context == null) {
+            return false;
+        }
+        PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+        return pm != null && pm.isPowerSaveMode();
     }
 
     // 仅用于 shouldBeDarkNow 日志去抖，记录上一次已打印的判定结果。Boolean 用可空初值
@@ -296,11 +322,13 @@ public class Theme {
 
     /**
      * themePref 决定交给 AppCompat 的 night mode：
-     * light/dark 映射到 MODE_NIGHT_NO/YES；"跟随系统"（default）映射到
-     * MODE_NIGHT_FOLLOW_SYSTEM，由系统与 AppCompat 自行决定何时深色。
+     * light/dark 映射到 MODE_NIGHT_NO/YES；"跟随系统"（default）在 API 29+ 映射到
+     * MODE_NIGHT_FOLLOW_SYSTEM，由系统与 AppCompat 自行决定何时深色；API 23-28
+     * 没有系统级深色开关（FOLLOW_SYSTEM 在那里恒为浅色），沿用
+     * MODE_NIGHT_AUTO_BATTERY，即"省电模式开启时深色"。
      *
-     * 这是官方推荐做法。此前"跟随系统"手动把系统模式解析成具体 YES/NO 再调
-     * setDefaultNightMode，会在一次系统深浅色切换中产生两次 Activity 重建——
+     * 交给 AppCompat 自行解析是官方推荐做法。此前"跟随系统"手动把系统模式解析成具体
+     * YES/NO 再调 setDefaultNightMode，会在一次系统深浅色切换中产生两次 Activity 重建——
      * 系统因 uiMode 变化重建一次，setDefaultNightMode 又触发 AppCompat 重建一次
      * （AppCompat 1.1.0 起 setDefaultNightMode 自带重建）。当时之所以绕开
      * FOLLOW_SYSTEM，根因是 AppTheme 的 parent 在非 night 分支被写成 .Light、
@@ -316,7 +344,11 @@ public class Theme {
         int targetNightMode = switch (themePref) {
             case LIGHT_MODE -> AppCompatDelegate.MODE_NIGHT_NO;
             case DARK_MODE -> AppCompatDelegate.MODE_NIGHT_YES;
-            default -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM;
+            // API 23-28 没有系统级深色开关，FOLLOW_SYSTEM 在那里恒解析为浅色；
+            // 沿用 AUTO_BATTERY 保留"省电模式即深色"这一 pre-Q 的既有能力。
+            default -> Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                    ? AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
+                    : AppCompatDelegate.MODE_NIGHT_AUTO_BATTERY;
         };
         int currentDefault = AppCompatDelegate.getDefaultNightMode();
         ThemeTrace.log("Theme.applyResolvedTheme.in",
