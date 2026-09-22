@@ -222,7 +222,8 @@ public class TabActivity extends WKBaseActivity<ActTabMainBinding> {
             UserModel.getInstance().device();
             WKCommonModel.getInstance().getAppNewVersion(false, version -> {
                 String v = WKDeviceUtils.getInstance().getVersionName(TabActivity.this);
-                if (version != null && !TextUtils.isEmpty(version.url) && WKDeviceUtils.getInstance().isNewerVersion(version.version, v)) {
+                if (version != null && !TextUtils.isEmpty(version.url)
+                        && WKDeviceUtils.getInstance().isNewerVersion(version.version, v)) {
                     WKDialogUtils.getInstance().showNewVersionDialog(TabActivity.this, version);
                 }
             });
@@ -470,7 +471,7 @@ public class TabActivity extends WKBaseActivity<ActTabMainBinding> {
         }
     }
 
-    // 记录上一次施加的系统深色态。uiMode 不在本 Activity 的 configChanges 里，单纯的深浅色
+    // 记录上一次生效的深色态。uiMode 不在本 Activity 的 configChanges 里，单纯的深浅色
     // 切换会走 recreate；但折叠屏展开 / 分屏这类 configChanges 覆盖的变化若与系统深浅色翻转
     // 同刻发生，会走到这里且不 recreate。此时需要主动失效随主题缓存的交互卡片 HostConfig，
     // 否则卡片会停留在旧模式配色。初值 null 保证首帧不会误判为翻转。
@@ -480,18 +481,30 @@ public class TabActivity extends WKBaseActivity<ActTabMainBinding> {
     public void onConfigurationChanged(@NonNull Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
         boolean isSystemDark = (newConfig.uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+        com.chat.base.ui.ThemeTrace.log("TabActivity.onConfigurationChanged",
+                "newConfig=" + com.chat.base.ui.ThemeTrace.uiMode(newConfig)
+                        + " isSystemDark=" + isSystemDark
+                        + " lastAppliedSystemDark=" + lastAppliedSystemDark
+                        + " " + com.chat.base.ui.ThemeTrace.snapshot(this));
         // 不要把 Activity 派发的 newConfig 整份传下去：mContext 是 Application，
         // 重载会把它整份写到进程级 Application Resources。分屏/自由窗口/折叠屏下
         // newConfig 携带的是 Activity 窗口的屏幕几何（screenWidthDp 等），会污染全局
         // 配置。走无参形式，仅基于 Application 自身 config 刷新 locale。
         WKMultiLanguageUtil.getInstance().setConfiguration();
-        // 深色态发生翻转（且非首帧）时，清掉按 isDark 持久缓存的卡片 HostConfig，
-        // 让后续渲染按新模式重建。渲染器自身的 view 缓存已按 isDark 自校验，无需额外处理。
+        // 深色态发生翻转（且非首帧）时，清掉按 isDark 持久缓存的卡片 HostConfig 并
+        // 重取静态色值。此路径未走 Activity 重建，拿不到重建后的刷新时机。
         if (lastAppliedSystemDark != null && lastAppliedSystemDark != isSystemDark) {
+            com.chat.base.ui.ThemeTrace.log("TabActivity.darkFlip",
+                    "from=" + lastAppliedSystemDark + " to=" + isSystemDark
+                            + " action=clearHostConfigCache+refreshColors");
             OctoHostConfig.INSTANCE.clearCache();
+            Theme.refreshColorsForCurrentMode();
+        } else {
+            com.chat.base.ui.ThemeTrace.log("TabActivity.noDarkFlip",
+                    "lastAppliedSystemDark=" + lastAppliedSystemDark
+                            + " isSystemDark=" + isSystemDark);
         }
         lastAppliedSystemDark = isSystemDark;
-        Theme.applyThemeForSystemMode(isSystemDark);
     }
 
     @Override

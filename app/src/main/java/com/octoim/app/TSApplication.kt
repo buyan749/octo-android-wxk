@@ -93,25 +93,34 @@ class TSApplication : MultiDexApplication() {
         })
     }
 
-    private var lastConfigLocale: java.util.Locale? = null
-
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        com.chat.base.ui.ThemeTrace.log(
+            "TSApplication.onConfigurationChanged",
+            "newConfig=" + com.chat.base.ui.ThemeTrace.uiMode(newConfig) +
+                " initCompleted=" + initCompleted +
+                " " + com.chat.base.ui.ThemeTrace.snapshot(this)
+        )
         // initAll() 只在默认进程执行；非默认进程（如 :dexopt）里 WKBaseApplication/
-        // WKSharedPreferencesUtil 未初始化，Theme.applyThemeForSystemMode 触碰到它们会崩溃。
+        // WKSharedPreferencesUtil 未初始化，触碰到它们会崩溃。
         if (!initCompleted) {
+            com.chat.base.ui.ThemeTrace.log(
+                "TSApplication.onConfigurationChanged.skip", "reason=initNotCompleted"
+            )
             return
         }
-        val isSystemDark = (newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-        // 旋转/字体缩放/分屏等配置变化都会触发这个回调，只有 locale 真的变了
-        // 才需要重新走 setConfiguration，否则每次无关变化都调用过时的
-        // updateConfiguration API 没有必要。
-        val newLocale = newConfig.locale
-        if (newLocale != lastConfigLocale) {
-            lastConfigLocale = newLocale
-            WKMultiLanguageUtil.getInstance().setConfiguration(newConfig)
-        }
-        Theme.applyThemeForSystemMode(isSystemDark)
+        // 深浅色不在这里处理主题：主题为 DayNight、"跟随系统"走 MODE_NIGHT_FOLLOW_SYSTEM，
+        // 系统 uiMode 变化由 AppCompat/框架自行重建 Activity。但必须把系统派发的
+        // newConfig（含最新 uiMode）刷进进程级 Application Resources——否则 app 级配置
+        // 停留在旧 night 位，AppCompat 的"跟随系统"解析会读到过期值算出"无变化"，
+        // 静态色值（读 Resources.getSystem() 真值）却已翻转，页面持久错位。
+        // newConfig 在 Application 回调里是 app 级配置，不含 Activity 窗口几何，整份
+        // 下传是安全的（Activity 派发的 newConfig 才不能传，见 TabActivity）。
+        WKMultiLanguageUtil.getInstance().setConfiguration(newConfig)
+        // 深浅色不在这里处理：主题为 DayNight、"跟随系统"走 MODE_NIGHT_FOLLOW_SYSTEM，
+        // 系统 uiMode 变化会自行重建 Activity。此处再调一次 setDefaultNightMode 会让
+        // AppCompat 额外重建一次，一次系统切换变成两次重建。静态色值的刷新已移到
+        // Activity 重建后（WKBaseActivity.onCreate → Theme.refreshColorsForCurrentMode）。
     }
 
     override fun attachBaseContext(base: Context?) {

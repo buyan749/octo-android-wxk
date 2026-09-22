@@ -83,12 +83,26 @@ object OctoHostConfig {
      * context 引用，也不 leak Activity。
      */
     fun get(context: Context): HostConfig {
-        val isDark = (context.resources.configuration.uiMode and
-                Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        val ctxNight = context.resources.configuration.uiMode and
+                Configuration.UI_MODE_NIGHT_MASK
+        val isDark = ctxNight == Configuration.UI_MODE_NIGHT_YES
+        // 轻量错位探针：卡片按 context 的 uiMode 取色，若与静态色值/App 判定的 dark 态
+        // 不一致，就是“页面部分变色”的直接现场——卡片走 context(可能仍旧)，其它控件走
+        // 静态色值(可能已新)。只在错位时告警，命中/未命中不再逐帧打重日志。
+        com.chat.base.ui.ThemeTrace.skew("OctoHostConfig.get", com.chat.base.ui.Theme.isDark(), ctxNight)
         // computeIfAbsent 在 ConcurrentHashMap 上是原子的 + 保证 compute 只跑一次，
         // 避免并发 miss 时重复走昂贵的 SWIG 反序列化。
         return cached.computeIfAbsent(isDark) {
-            HostConfig.DeserializeFromString(buildJson(paletteFromResources(context)))
+            val palette = paletteFromResources(context)
+            com.chat.base.ui.ThemeTrace.log(
+                "OctoHostConfig.build",
+                "isDark=" + isDark +
+                    " cardBg=" + palette.cardBg +
+                    " textPrimary=" + palette.textPrimary +
+                    " textSubtle=" + palette.textSubtle +
+                    " separatorLine=" + palette.separatorLine
+            )
+            HostConfig.DeserializeFromString(buildJson(palette))
         }
     }
 
@@ -99,6 +113,10 @@ object OctoHostConfig {
      * computeIfAbsent 内 palette 是即时从资源读的，清空后无需其它状态复位。
      */
     fun clearCache() {
+        com.chat.base.ui.ThemeTrace.logWithStack(
+            "OctoHostConfig.clearCache",
+            "cachedKeysBefore=" + cached.keys.sortedBy { it.toString() } + " size=" + cached.size
+        )
         cached.clear()
     }
 
