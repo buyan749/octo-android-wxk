@@ -34,7 +34,6 @@ import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
-import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
 import android.os.Handler;
@@ -408,9 +407,6 @@ public class WKDialogUtils {
         Button sureBtn = view.findViewById(R.id.sureBtn);
         ProgressBar progressBar = view.findViewById(R.id.progressBar);
         TextView progressTv = view.findViewById(R.id.progressTv);
-        // 横竖屏适配：版本号+更新日志放在卡片内的 ScrollView 里，横屏卡片占满高度、内容在卡片内滚动
-        View cardView = view.findViewById(R.id.cardLayout);
-        View rootView = view.findViewById(R.id.rootLayout);
         android.app.AlertDialog.Builder builder = new android.app.AlertDialog.Builder(context, R.style.AlertDialog);
         view.setBackgroundColor(ContextCompat.getColor(context, R.color.transparent));
         android.app.AlertDialog alertDialog = builder.create();
@@ -424,10 +420,6 @@ public class WKDialogUtils {
         assert window != null;
         WindowManager.LayoutParams param = window.getAttributes();
         param.width = (int) (PaneMetrics.widthPx(context) * 0.85f);
-        // 横屏时卡片占满高度（内部 ScrollView 吃掉剩余空间实现内容滚动），竖屏按内容 wrap
-        boolean initLandscape = context.getResources().getConfiguration().orientation
-                == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
-        applyOrientationHeight(param, cardView, rootView, initLandscape);
         if (versionEntity.is_force == 1) {
             cancelTv.setVisibility(GONE);
         }
@@ -445,12 +437,8 @@ public class WKDialogUtils {
                     if (!alertDialog.isShowing()) return;
                     Window w = alertDialog.getWindow();
                     if (w == null) return;
-                    boolean isLandscape = newConfig.orientation
-                            == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
                     WindowManager.LayoutParams p = w.getAttributes();
                     p.width = (int) (PaneMetrics.widthPx(context) * 0.85f);
-                    // 横屏卡片占满高度、竖屏按内容 wrap；横屏走 OnGlobalLayoutListener 读根布局实测高赋值
-                    applyOrientationHeight(p, cardView, rootView, isLandscape);
                     w.setAttributes(p);
                 } catch (Throwable ignored) {
                     // 配置变更路径上的 Dialog 竞态兜底
@@ -549,62 +537,6 @@ public class WKDialogUtils {
                     });
         });
 
-    }
-
-    /**
-     * 按屏幕朝向设置更新弹窗的高度策略。
-     * <p>横屏：window 占满高度（MATCH_PARENT），卡片高度改为等根布局布局稳定后读取其实测
-     * 高度再动态赋值（见 {@link #applyLandscapeCardHeight}），卡片内的 ScrollView 通过
-     * weight 吃掉标题/按钮之外的剩余空间，实现更新日志在卡片内滚动、标题与按钮始终可见。
-     * <p>竖屏：window 也用 MATCH_PARENT 让根布局能撑到竖屏可用高度，卡片高度则等布局稳定后
-     * 重置为 WRAP_CONTENT 并重新测量（见 {@link #applyPortraitCardHeight}），随内容自适应。
-     * 两个朝向都通过“等布局稳定后动态赋值/重测”覆盖旋转前的历史高度，避免沿用旧朝向的值。
-     */
-    private void applyOrientationHeight(WindowManager.LayoutParams param, View cardView, View rootView, boolean isLandscape) {
-        param.height = WindowManager.LayoutParams.MATCH_PARENT;
-        if (isLandscape) {
-            applyLandscapeCardHeight(rootView, cardView);
-        } else {
-            applyPortraitCardHeight(rootView, cardView);
-        }
-    }
-
-    /**
-     * 竖屏下：注册一次性 OnGlobalLayoutListener，等布局稳定后把卡片重置为 WRAP_CONTENT
-     * 并 requestLayout 触发重新测量，读到即摘除。用于覆盖横屏转来时残留的绝对高度。
-     */
-    private void applyPortraitCardHeight(View rootView, View cardView) {
-        rootView.getViewTreeObserver().addOnGlobalLayoutListener(
-                new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
-                    @Override
-                    public void onGlobalLayout() {
-                        rootView.getViewTreeObserver().removeOnGlobalLayoutListener(this);
-                        ViewGroup.LayoutParams cardLp = cardView.getLayoutParams();
-                        cardLp.height = ViewGroup.LayoutParams.WRAP_CONTENT;
-                        cardView.setLayoutParams(cardLp);
-                        cardView.requestLayout();
-                    }
-                });
-    }
-
-    /**
-     * 横屏下：注册一次性 OnGlobalLayoutListener，等根布局（最下层背景）布局稳定后读取其
-     * 实测高度，直接赋给卡片高度，读到后立刻摘除监听。读实测值 + 直接赋绝对值，避免依赖
-     * 框架自适应的不确定时机，也覆盖掉旋转前的历史高度。
-     */
-    private void applyLandscapeCardHeight(View rootView, View cardView) {
-        rootView.getViewTreeObserver().addOnGlobalLayoutListener(
-                new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
-                    @Override
-                    public void onGlobalLayout() {
-                        // 读到即摘除，只生效一次
-                        rootView.getViewTreeObserver().removeOnGlobalLayoutListener(this);
-                        int h = rootView.getHeight();
-                        ViewGroup.LayoutParams cardLp = cardView.getLayoutParams();
-                        cardLp.height = h;
-                        cardView.setLayoutParams(cardLp);
-                    }
-                });
     }
 
 
